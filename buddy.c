@@ -15,6 +15,7 @@ typedef struct free_node {
 static void *base_addr = NULL;
 static int total_pages = 0;
 static free_node_t free_lists[MAX_RANK + 1]; // free_lists[1] to free_lists[16]
+static int free_counts[MAX_RANK + 1]; // Count of free blocks for each rank
 static unsigned char page_rank_map[MAX_PAGES]; // Store the rank of each page
 
 // Convert physical address to page index
@@ -56,17 +57,19 @@ static inline int is_list_empty(free_node_t *head) {
 }
 
 // Add node to list
-static inline void list_add(free_node_t *head, free_node_t *node) {
+static inline void list_add(free_node_t *head, free_node_t *node, int rank) {
     node->next = head->next;
     node->prev = head;
     head->next->prev = node;
     head->next = node;
+    free_counts[rank]++;
 }
 
 // Remove node from list
-static inline void list_remove(free_node_t *node) {
+static inline void list_remove(free_node_t *node, int rank) {
     node->prev->next = node->next;
     node->next->prev = node->prev;
+    free_counts[rank]--;
 }
 
 int init_page(void *p, int pgcount) {
@@ -80,9 +83,10 @@ int init_page(void *p, int pgcount) {
         page_rank_map[i] = 0;
     }
 
-    // Initialize free lists
+    // Initialize free lists and counters
     for (int i = 1; i <= MAX_RANK; i++) {
         init_list(&free_lists[i]);
+        free_counts[i] = 0;
     }
 
     // Add free blocks to appropriate free lists
@@ -99,7 +103,7 @@ int init_page(void *p, int pgcount) {
                 // Add this block to free list
                 void *block_addr = page_idx_to_addr(current_page);
                 free_node_t *node = (free_node_t *)block_addr;
-                list_add(&free_lists[rank], node);
+                list_add(&free_lists[rank], node, rank);
 
                 // Mark first page with rank (free)
                 page_rank_map[current_page] = rank;
@@ -137,7 +141,7 @@ void *alloc_pages(int rank) {
 
     // Get a block from the free list
     free_node_t *node = free_lists[current_rank].next;
-    list_remove(node);
+    list_remove(node, current_rank);
     void *block_addr = (void *)node;
     int page_idx = addr_to_page_idx(block_addr);
 
@@ -150,7 +154,7 @@ void *alloc_pages(int rank) {
 
         // Add the buddy to the free list
         free_node_t *buddy_node = (free_node_t *)buddy_addr;
-        list_add(&free_lists[current_rank], buddy_node);
+        list_add(&free_lists[current_rank], buddy_node, current_rank);
 
         // Mark buddy as free with rank
         page_rank_map[buddy_idx] = current_rank;
@@ -197,7 +201,7 @@ int return_pages(void *p) {
         // Remove buddy from free list
         void *buddy_addr = page_idx_to_addr(buddy_idx);
         free_node_t *buddy_node = (free_node_t *)buddy_addr;
-        list_remove(buddy_node);
+        list_remove(buddy_node, rank);
 
         // Merge: the lower address becomes the merged block
         if (buddy_idx < page_idx) {
@@ -211,7 +215,7 @@ int return_pages(void *p) {
 
     // Add the block to the free list
     free_node_t *node = (free_node_t *)page_idx_to_addr(page_idx);
-    list_add(&free_lists[rank], node);
+    list_add(&free_lists[rank], node, rank);
 
     return OK;
 }
@@ -228,12 +232,5 @@ int query_ranks(void *p) {
 int query_page_counts(int rank) {
     if (rank < 1 || rank > MAX_RANK) return -EINVAL;
 
-    int count = 0;
-    free_node_t *node = free_lists[rank].next;
-    while (node != &free_lists[rank]) {
-        count++;
-        node = node->next;
-    }
-
-    return count;
+    return free_counts[rank];
 }
