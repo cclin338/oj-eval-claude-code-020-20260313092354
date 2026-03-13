@@ -45,18 +45,18 @@ static inline int is_aligned(int idx, int rank) {
 }
 
 // Initialize doubly linked list
-static void init_list(free_node_t *head) {
+static inline void init_list(free_node_t *head) {
     head->next = head;
     head->prev = head;
 }
 
 // Check if list is empty
-static int is_list_empty(free_node_t *head) {
+static inline int is_list_empty(free_node_t *head) {
     return head->next == head;
 }
 
 // Add node to list
-static void list_add(free_node_t *head, free_node_t *node) {
+static inline void list_add(free_node_t *head, free_node_t *node) {
     node->next = head->next;
     node->prev = head;
     head->next->prev = node;
@@ -64,11 +64,9 @@ static void list_add(free_node_t *head, free_node_t *node) {
 }
 
 // Remove node from list
-static void list_remove(free_node_t *node) {
+static inline void list_remove(free_node_t *node) {
     node->prev->next = node->next;
     node->next->prev = node->prev;
-    node->next = NULL;
-    node->prev = NULL;
 }
 
 int init_page(void *p, int pgcount) {
@@ -103,10 +101,8 @@ int init_page(void *p, int pgcount) {
                 free_node_t *node = (free_node_t *)block_addr;
                 list_add(&free_lists[rank], node);
 
-                // Mark pages as free with this rank
-                for (int i = 0; i < block_size; i++) {
-                    page_rank_map[current_page + i] = rank;
-                }
+                // Mark first page with rank (free)
+                page_rank_map[current_page] = rank;
 
                 current_page += block_size;
                 break;
@@ -156,17 +152,12 @@ void *alloc_pages(int rank) {
         free_node_t *buddy_node = (free_node_t *)buddy_addr;
         list_add(&free_lists[current_rank], buddy_node);
 
-        // Update page rank map for buddy
-        for (int i = 0; i < block_size; i++) {
-            page_rank_map[buddy_idx + i] = current_rank;
-        }
+        // Mark buddy as free with rank
+        page_rank_map[buddy_idx] = current_rank;
     }
 
-    // Mark the allocated pages
-    int block_size = 1 << (rank - 1);
-    for (int i = 0; i < block_size; i++) {
-        page_rank_map[page_idx + i] = rank | 0x80; // Set high bit to indicate allocated
-    }
+    // Mark the allocated page (set high bit)
+    page_rank_map[page_idx] = rank | 0x80;
 
     return block_addr;
 }
@@ -191,10 +182,8 @@ int return_pages(void *p) {
         return -EINVAL;
     }
 
-    // Mark pages as free
-    for (int i = 0; i < block_size; i++) {
-        page_rank_map[page_idx + i] = rank;
-    }
+    // Mark page as free
+    page_rank_map[page_idx] = rank;
 
     // Try to merge with buddy
     while (rank < MAX_RANK) {
@@ -213,16 +202,11 @@ int return_pages(void *p) {
         // Merge: the lower address becomes the merged block
         if (buddy_idx < page_idx) {
             page_idx = buddy_idx;
-            p = buddy_addr;
         }
 
         rank++;
-        block_size = 1 << (rank - 1);
-
-        // Update page rank map
-        for (int i = 0; i < block_size; i++) {
-            page_rank_map[page_idx + i] = rank;
-        }
+        // Update rank for merged block
+        page_rank_map[page_idx] = rank;
     }
 
     // Add the block to the free list
